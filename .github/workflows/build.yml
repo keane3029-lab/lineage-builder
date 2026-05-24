@@ -1,0 +1,78 @@
+name: Build LineageOS
+
+on:
+  workflow_dispatch:
+    inputs:
+      DEVICE_CODENAME:
+        description: 'Device codename'
+        required: true
+        default: 'generic_x86_64'
+      LINEAGE_BRANCH:
+        description: 'LineageOS branch'
+        required: true
+        default: 'lineage-21.0'
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 360
+
+    steps:
+      - name: Free Disk Space
+        run: |
+          sudo rm -rf /usr/share/dotnet
+          sudo rm -rf /opt/ghc
+          sudo rm -rf /usr/local/share/boost
+          sudo rm -rf "$AGENT_TOOLSDIRECTORY"
+          df -h
+
+      - name: Install Dependencies
+        run: |
+          sudo apt update
+          sudo apt install -y bc bison build-essential ccache curl \
+          flex g++-multilib gcc-multilib git gnupg gperf imagemagick \
+          lib32ncurses5-dev lib32readline-dev lib32z1-dev liblz4-tool \
+          libncurses5 libncurses5-dev libssl-dev libxml2 libxml2-utils \
+          lzop pngcrush rsync schedtool squashfs-tools xsltproc zip \
+          zlib1g-dev python3 python-is-python3
+
+      - name: Set up repo tool
+        run: |
+          mkdir -p ~/bin
+          curl https://storage.googleapis.com/git-repo-downloads/repo > ~/bin/repo
+          chmod a+x ~/bin/repo
+          echo "$HOME/bin" >> $GITHUB_PATH
+
+      - name: Configure Git
+        run: |
+          git config --global user.email "build@lineage.local"
+          git config --global user.name "LineageBuild"
+
+      - name: Sync LineageOS Source
+        run: |
+          mkdir -p ~/android/lineage
+          cd ~/android/lineage
+          repo init -u https://github.com/LineageOS/android.git \
+            -b ${{ github.event.inputs.LINEAGE_BRANCH }} \
+            --depth=1
+          repo sync -c -j4 --force-sync --no-clone-bundle --no-tags
+
+      - name: Setup CCACHE
+        run: |
+          echo "USE_CCACHE=1" >> $GITHUB_ENV
+          echo "CCACHE_EXEC=/usr/bin/ccache" >> $GITHUB_ENV
+          ccache -M 10G
+
+      - name: Build
+        run: |
+          cd ~/android/lineage
+          source build/envsetup.sh
+          breakfast ${{ github.event.inputs.DEVICE_CODENAME }}
+          brunch ${{ github.event.inputs.DEVICE_CODENAME }}
+
+      - name: Upload ROM
+        uses: actions/upload-artifact@v4
+        with:
+          name: LineageOS-${{ github.event.inputs.DEVICE_CODENAME }}
+          path: ~/android/lineage/out/target/product/${{ github.event.inputs.DEVICE_CODENAME }}/lineage-*.zip
+          retention-days: 7
